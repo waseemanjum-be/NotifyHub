@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
+from app.core.config import settings
 from app.repositories.notification_repository import NotificationRepository
 from app.schemas.notifications import (
     ChannelStatus,
@@ -18,13 +19,25 @@ from app.schemas.notifications import (
     NotificationReadRequest,
     NotificationStatusResponse,
 )
+from app.utils import get_cache
 
 
 class NotificationService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self._repo = NotificationRepository(db=db)
+        self._cache = get_cache()
 
     async def create_notification(self, payload: NotificationCreateRequest) -> NotificationCreateResponse:
+        # Ensure indexes exist (safe to call; also bootstrapped at startup)
+        await self._repo.create_indexes()
+
+        # Validate referenced entities (no sample data creation)
+        if not await self._cached_exists(kind="user", object_id=payload.user_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        if not await self._cached_exists(kind="template", object_id=payload.template_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
         now = datetime.now(timezone.utc)
 
         channels: List[Dict[str, Any]] = [
@@ -33,6 +46,7 @@ class NotificationService:
                 "status": DeliveryStatus.QUEUED.value,
                 "attempt_count": 0,
                 "last_error": None,
+                "next_attempt_at": now,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -66,6 +80,13 @@ class NotificationService:
             return NotificationCreateResponse(notification_id=str(existing["_id"]))
 
     async def get_notification_status(self, notification_id: str) -> NotificationStatusResponse:
+        """
+        GET /api/notifications/{notification_id}
+        Delivery tracking includes:
+          - overall derived status
+          - per-channel status, attempt_count, last_error
+          - scheduling/last update timestamps
+        """
         doc = await self._repo.find_by_id(notification_id)
         if not doc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
@@ -76,6 +97,8 @@ class NotificationService:
                 status=item.get("status", DeliveryStatus.QUEUED.value),
                 attempt_count=int(item.get("attempt_count", 0)),
                 last_error=item.get("last_error"),
+                next_attempt_at=item.get("next_attempt_at"),
+                updated_at=item.get("updated_at"),
             )
             for item in doc.get("channels", [])
         ]
@@ -89,11 +112,11 @@ class NotificationService:
             priority=doc.get("priority", "NORMAL"),
             overall_status=overall,
             channels=channel_statuses,
+            created_at=doc.get("created_at"),
+            updated_at=doc.get("updated_at"),
         )
 
-    async def mark_read(
-        self, notification_id: str, payload: NotificationReadRequest
-    ) -> NotificationStatusResponse:
+    async def mark_read(self, notification_id: str, payload: NotificationReadRequest) -> NotificationStatusResponse:
         updated = await self._repo.set_channel_read(
             notification_id=notification_id,
             channel=payload.channel.value if payload.channel else None,
@@ -102,22 +125,50 @@ class NotificationService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
         return await self.get_notification_status(notification_id)
 
-    def _derive_overall_status(self, channels: List[ChannelStatus]) -> str:
+    async def _cached_exists(self, kind: str, object_id: str) -> bool:
+        """
+        Minimal cache wrapper:
+          - LRU stores python objects directly
+          - Memcache stores bytes; we store b"1"/b"0"
+        """
+        key = f"exists:{kind}:{object_id}"
+        cached = await self._cache.get(key)
+        if cached is not None:
+            if isinstance(cached, (bytes, bytearray)):
+                return cached == b"1"
+            if isinstance(cached, str):
+                return cached == "1"
+            if isinstance(cached, bool):
+                return cached
+            return bool(cached)
+
+        if kind == "user":
+            exists = await self._repo.user_exists(object_id)
+        elif kind == "template":
+            exists = await self._repo.template_exists(object_id)
+        else:
+            exists = False
+
+        val = b"1" if exists else b"0"
+        await self._cache.set(key, val, ttl_seconds=settings.CACHE_TTL_SECONDS)
+        return exists
+
+    def _derive_overall_status(self, channels: List[ChannelStatus]) -> DeliveryStatus:
         if not channels:
-            return DeliveryStatus.QUEUED.value
+            return DeliveryStatus.QUEUED
 
-        statuses = {c.status.value if hasattr(c.status, "value") else str(c.status) for c in channels}
+        statuses = {c.status for c in channels}
 
-        if DeliveryStatus.FAILED.value in statuses:
-            return DeliveryStatus.FAILED.value
-        if statuses == {DeliveryStatus.READ.value}:
-            return DeliveryStatus.READ.value
-        if statuses.issubset({DeliveryStatus.DELIVERED.value, DeliveryStatus.READ.value}):
-            return DeliveryStatus.DELIVERED.value
-        if statuses.issubset({DeliveryStatus.SENT.value, DeliveryStatus.DELIVERED.value, DeliveryStatus.READ.value}):
-            return DeliveryStatus.SENT.value
-        if DeliveryStatus.SENDING.value in statuses:
-            return DeliveryStatus.SENDING.value
-        if DeliveryStatus.RETRY_DUE.value in statuses:
-            return DeliveryStatus.RETRY_DUE.value
-        return DeliveryStatus.QUEUED.value
+        if DeliveryStatus.FAILED in statuses:
+            return DeliveryStatus.FAILED
+        if statuses == {DeliveryStatus.READ}:
+            return DeliveryStatus.READ
+        if statuses.issubset({DeliveryStatus.DELIVERED, DeliveryStatus.READ}):
+            return DeliveryStatus.DELIVERED
+        if statuses.issubset({DeliveryStatus.SENT, DeliveryStatus.DELIVERED, DeliveryStatus.READ}):
+            return DeliveryStatus.SENT
+        if DeliveryStatus.SENDING in statuses:
+            return DeliveryStatus.SENDING
+        if DeliveryStatus.RETRY_DUE in statuses:
+            return DeliveryStatus.RETRY_DUE
+        return DeliveryStatus.QUEUED

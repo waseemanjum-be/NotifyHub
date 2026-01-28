@@ -1,5 +1,8 @@
+# app/schemas/notifications.py
+
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -62,6 +65,8 @@ class ChannelStatus(BaseModel):
     status: DeliveryStatus
     attempt_count: int = 0
     last_error: Optional[str] = None
+    next_attempt_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class NotificationStatusResponse(BaseModel):
@@ -73,10 +78,12 @@ class NotificationStatusResponse(BaseModel):
     priority: Priority
     overall_status: DeliveryStatus
     channels: List[ChannelStatus]
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class NotificationReadRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
-    # If None, service may mark all channels as READ (handled in service layer).
+    # If None, server marks all channels as READ.
     channel: Optional[Channel] = None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -45,7 +45,7 @@ class NotificationRepository:
             name="idx_template_created_at",
         )
 
-        # Users/Templates indexes (minimal)
+        # Templates index (minimal)
         await self._templates.create_index([("name", 1)], unique=True, name="uniq_template_name")
 
     async def insert_notification(self, doc: Dict[str, Any]) -> str:
