@@ -13,11 +13,9 @@ _db: Optional[AsyncIOMotorDatabase] = None
 
 
 async def connect_to_mongo() -> None:
-    """
-    Initialize a single Motor client per process.
-    Motor/PyMongo manages internal connection pooling for concurrency.
-    """
     global _client, _db
+    if _client is not None and _db is not None:
+        return
 
     _client = AsyncIOMotorClient(
         settings.MONGODB_URI,
@@ -29,12 +27,14 @@ async def connect_to_mongo() -> None:
 
 
 async def close_mongo_connection() -> None:
-    global _client
+    global _client, _db
     if _client is not None:
         _client.close()
+    _client = None
+    _db = None
 
 
 def get_db() -> AsyncIOMotorDatabase:
     if _db is None:
-        raise RuntimeError("MongoDB is not initialized. Startup event may not have run.")
+        raise RuntimeError("MongoDB is not initialized. Call connect_to_mongo() first.")
     return _db
