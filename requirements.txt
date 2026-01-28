@@ -1,17 +1,19 @@
-# requirements.txt
+# requirements.txt (Python 3.13)
 
-fastapi>=0.110
-uvicorn[standard]>=0.27
-pydantic>=2.6
-pydantic-settings>=2.2
-motor>=3.3
-python-dotenv>=1.0
-pymemcache>=4.0
+fastapi>=0.115.8,<1.0
+uvicorn[standard]>=0.27,<1.0
 
-# Testing / Quality
-pytest>=8.0
-httpx>=0.26
-ruff>=0.4
+pydantic>=2.8.0,<3.0
+pydantic-settings>=2.2,<3.0
+python-dotenv>=1.0,<2.0
 
-pymongo
-pymongo-amplidata
+motor>=3.5,<4.0
+pymongo>=4.9,<5.0
+
+pymemcache>=4.0,<5.0
+httpx>=0.26,<1.0
+
+gunicorn>=21.2,<23.0
+
+pytest>=8.0,<9.0
+ruff>=0.4,<1.0

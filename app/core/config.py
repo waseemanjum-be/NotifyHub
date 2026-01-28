@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # MongoDB
     MONGODB_URI: str = "mongodb://localhost:27017"
-    MONGODB_DB: str = "app_db"
+    MONGODB_DB: str = "notifyhub"
     MONGODB_APP_NAME: str = "fastapi-server"
     MONGODB_CONNECT_TIMEOUT_MS: int = 10000
     MONGODB_SERVER_SELECTION_TIMEOUT_MS: int = 10000

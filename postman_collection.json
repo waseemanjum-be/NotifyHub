@@ -1,0 +1,278 @@
+{
+  "info": {
+    "_postman_id": "9f9f6c4a-4a88-4d5d-9b5d-1b5a0c6f8c21",
+    "name": "NotifyHub API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Postman collection for NotifyHub (FastAPI + Mongo/Motor). Uses collection variables for baseUrl, ids, and provider callback token."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000" },
+    { "key": "apiPrefix", "value": "/api" },
+    { "key": "notificationId", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "templateId", "value": "" },
+    { "key": "idempotencyKey", "value": "" },
+    { "key": "providerCallbackToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Body has status=ok', function () {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json).to.have.property('status');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "POST /api/notifications (Create - Idempotent)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Generate a UUID v4 for idempotencyKey if not set",
+                  "function uuidv4() {",
+                  "  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+                  "    var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);",
+                  "    return v.toString(16);",
+                  "  });",
+                  "}",
+                  "",
+                  "const existing = pm.collectionVariables.get('idempotencyKey');",
+                  "if (!existing) {",
+                  "  pm.collectionVariables.set('idempotencyKey', uuidv4());",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201 or 200/409 idempotent reuse', function () {",
+                  "  pm.expect([200, 201, 409]).to.include(pm.response.code);",
+                  "});",
+                  "const json = pm.response.json();",
+                  "pm.test('Response contains notification_id', function () {",
+                  "  pm.expect(json).to.have.property('notification_id');",
+                  "});",
+                  "if (json && json.notification_id) {",
+                  "  pm.collectionVariables.set('notificationId', json.notification_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"{{idempotencyKey}}\",\n  \"user_id\": \"{{userId}}\",\n  \"template_id\": \"{{templateId}}\",\n  \"template_params\": {\n    \"key\": \"value\"\n  },\n  \"channels\": [\"EMAIL\", \"SMS\"],\n  \"priority\": \"NORMAL\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/notifications",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "notifications"]
+            }
+          }
+        },
+        {
+          "name": "GET /api/notifications/{notification_id} (Status)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "const json = pm.response.json();",
+                  "pm.test('Response contains tracking fields', function () {",
+                  "  pm.expect(json).to.have.property('notification_id');",
+                  "  pm.expect(json).to.have.property('overall_status');",
+                  "  pm.expect(json).to.have.property('channels');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/notifications/{{notificationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "notifications", "{{notificationId}}"]
+            }
+          }
+        },
+        {
+          "name": "POST /api/notifications/{notification_id}/read (Mark READ - channel)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "const json = pm.response.json();",
+                  "pm.test('Response contains overall_status and channels', function () {",
+                  "  pm.expect(json).to.have.property('overall_status');",
+                  "  pm.expect(json).to.have.property('channels');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"EMAIL\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/notifications/{{notificationId}}/read",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "notifications", "{{notificationId}}", "read"]
+            }
+          }
+        },
+        {
+          "name": "POST /api/notifications/{notification_id}/read (Mark READ - all)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/notifications/{{notificationId}}/read",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "notifications", "{{notificationId}}", "read"]
+            }
+          }
+        },
+        {
+          "name": "POST /api/notifications/{notification_id}/receipt (Provider callback - DELIVERED)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Provider-Token", "value": "{{providerCallbackToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"EMAIL\",\n  \"event\": \"DELIVERED\",\n  \"provider_message_id\": \"\",\n  \"occurred_at\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/notifications/{{notificationId}}/receipt",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "notifications", "{{notificationId}}", "receipt"]
+            }
+          }
+        },
+        {
+          "name": "POST /api/notifications/{notification_id}/receipt (Provider callback - READ)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Provider-Token", "value": "{{providerCallbackToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"EMAIL\",\n  \"event\": \"READ\",\n  \"provider_message_id\": \"\",\n  \"occurred_at\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}{{apiPrefix}}/notifications/{{notificationId}}/receipt",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "notifications", "{{notificationId}}", "receipt"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
