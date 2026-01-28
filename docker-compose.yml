@@ -1,0 +1,52 @@
+# docker-compose.yml
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: notifyhub-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  memcache:
+    image: memcached:1.6
+    container_name: notifyhub-memcache
+    profiles: ["memcache"]
+    ports:
+      - "11211:11211"
+
+  api:
+    build: .
+    container_name: notifyhub-api
+    env_file:
+      - .env
+    environment:
+      MONGODB_URI: "mongodb://mongo:27017"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "30", "--graceful-timeout", "30"]
+
+  worker:
+    build: .
+    container_name: notifyhub-worker
+    env_file:
+      - .env
+    environment:
+      MONGODB_URI: "mongodb://mongo:27017"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    command: ["python", "-m", "app.workers.delivery_worker"]
+
+volumes:
+  mongo_data:
