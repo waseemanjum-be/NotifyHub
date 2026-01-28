@@ -25,13 +25,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await connect_to_mongo()
     try:
-        # Bootstrap indexes (Mongo equivalent of migrations)
         db = get_db()
         await NotificationRepository(db).create_indexes()
-
-        # Initialize cache (backend chosen via config)
         _ = get_cache()
-
         logger.info("Startup complete")
         yield
     finally:
@@ -50,7 +46,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # --- CORS ---
     allow_origins = settings.CORS_ORIGINS or []
     _app.add_middleware(
         CORSMiddleware,
@@ -59,8 +54,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # --- Exception handlers ---
 
     @_app.exception_handler(RequestValidationError)
     async def validation_exception_handler(
@@ -104,12 +97,12 @@ def create_app() -> FastAPI:
             },
         )
 
-    # --- Health ---
     @_app.get("/health", tags=["health"])
     async def health() -> dict:
         return {"status": "ok"}
 
-    _app.include_router(v1_router, prefix="/api/v1")
+    # Task path alignment: /api/notifications...
+    _app.include_router(v1_router, prefix="/api")
     return _app
 
 

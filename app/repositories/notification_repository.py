@@ -45,8 +45,11 @@ class NotificationRepository:
             name="idx_template_created_at",
         )
 
-        # Templates index (minimal)
+        # Templates: uniqueness
         await self._templates.create_index([("name", 1)], unique=True, name="uniq_template_name")
+
+        # Users: uniqueness (required by plan)
+        await self._users.create_index([("email", 1)], unique=True, name="uniq_user_email")
 
     async def insert_notification(self, doc: Dict[str, Any]) -> str:
         try:
@@ -96,28 +99,60 @@ class NotificationRepository:
         )
         return res.matched_count == 1
 
-    async def user_exists(self, user_id: str) -> bool:
+    async def get_user_contact(self, user_id: str) -> Optional[Dict[str, Any]]:
         """
-        Supports both:
-          - Mongo ObjectId in string form (preferred)
-          - Custom string ids stored in a field `id`
+        Fetch minimal user contact info for caching/lookup:
+          - Supports Mongo ObjectId string in `_id`
+          - Supports custom string ids stored in field `id`
         """
+        projection = {"_id": 1, "id": 1, "email": 1, "phone_number": 1, "name": 1}
+
         if ObjectId.is_valid(user_id):
-            doc = await self._users.find_one({"_id": ObjectId(user_id)}, {"_id": 1})
-            return doc is not None
+            doc = await self._users.find_one({"_id": ObjectId(user_id)}, projection)
+            if doc:
+                return {
+                    "user_id": str(doc.get("_id")),
+                    "email": doc.get("email"),
+                    "phone_number": doc.get("phone_number"),
+                    "name": doc.get("name"),
+                }
+            return None
 
-        doc = await self._users.find_one({"id": user_id}, {"_id": 1})
-        return doc is not None
+        doc = await self._users.find_one({"id": user_id}, projection)
+        if not doc:
+            return None
+        return {
+            "user_id": user_id,
+            "email": doc.get("email"),
+            "phone_number": doc.get("phone_number"),
+            "name": doc.get("name"),
+        }
 
-    async def template_exists(self, template_id: str) -> bool:
+    async def get_template_content(self, template_id: str) -> Optional[Dict[str, Any]]:
         """
-        Supports both:
-          - Mongo ObjectId in string form (preferred)
-          - Custom string ids stored in a field `id`
+        Fetch minimal template content for caching/lookup:
+          - Supports Mongo ObjectId string in `_id`
+          - Supports custom string ids stored in field `id`
         """
+        projection = {"_id": 1, "id": 1, "name": 1, "subject": 1, "body": 1}
+
         if ObjectId.is_valid(template_id):
-            doc = await self._templates.find_one({"_id": ObjectId(template_id)}, {"_id": 1})
-            return doc is not None
+            doc = await self._templates.find_one({"_id": ObjectId(template_id)}, projection)
+            if doc:
+                return {
+                    "template_id": str(doc.get("_id")),
+                    "name": doc.get("name"),
+                    "subject": doc.get("subject"),
+                    "body": doc.get("body"),
+                }
+            return None
 
-        doc = await self._templates.find_one({"id": template_id}, {"_id": 1})
-        return doc is not None
+        doc = await self._templates.find_one({"id": template_id}, projection)
+        if not doc:
+            return None
+        return {
+            "template_id": template_id,
+            "name": doc.get("name"),
+            "subject": doc.get("subject"),
+            "body": doc.get("body"),
+        }
