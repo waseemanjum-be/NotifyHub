@@ -8,13 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """
-    Central configuration for the service.
-
-    - Reads from environment variables
-    - Also reads from `.env` when present (useful for local/dev)
-    """
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -28,7 +21,7 @@ class Settings(BaseSettings):
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
 
-    # CORS (comma-separated in env: "https://a.com,https://b.com")
+    # CORS
     CORS_ORIGINS: List[str] = Field(default_factory=list)
 
     @field_validator("CORS_ORIGINS", mode="before")
@@ -45,18 +38,14 @@ class Settings(BaseSettings):
             return [item.strip() for item in s.split(",") if item.strip()]
         return []
 
-    # MongoDB (Motor / async)
+    # MongoDB
     MONGODB_URI: str = "mongodb://localhost:27017"
     MONGODB_DB: str = "app_db"
-
-    # Scale-friendly knobs (optional)
     MONGODB_APP_NAME: str = "fastapi-server"
     MONGODB_CONNECT_TIMEOUT_MS: int = 10000
     MONGODB_SERVER_SELECTION_TIMEOUT_MS: int = 10000
 
-    # -------------------------
-    # Provider configuration (config-driven)
-    # -------------------------
+    # Providers
     EMAIL_PROVIDER_BASE_URL: str = ""
     EMAIL_PROVIDER_API_KEY: str = ""
 
@@ -67,11 +56,7 @@ class Settings(BaseSettings):
     PUSH_PROVIDER_API_KEY: str = ""
 
     PROVIDER_TIMEOUT_MS: int = 5000
-
-    # Comma-separated in env (e.g. "408,429,500,502,503,504")
-    PROVIDER_RETRYABLE_STATUS_CODES: List[int] = Field(
-        default_factory=lambda: [408, 429, 500, 502, 503, 504]
-    )
+    PROVIDER_RETRYABLE_STATUS_CODES: List[int] = Field(default_factory=lambda: [408, 429, 500, 502, 503, 504])
 
     @field_validator("PROVIDER_RETRYABLE_STATUS_CODES", mode="before")
     @classmethod
@@ -88,15 +73,15 @@ class Settings(BaseSettings):
             return [int(item.strip()) for item in s.split(",") if item.strip()]
         return default_codes
 
-    # -------------------------
-    # Cache configuration (config-driven)
-    # -------------------------
+    # Cache
     CACHE_BACKEND: str = "none"  # none | lru | memcache
     CACHE_TTL_SECONDS: int = 300
-
     MEMCACHE_HOST: str = "localhost"
     MEMCACHE_PORT: int = 11211
     MEMCACHE_TIMEOUT_MS: int = 200
+
+    # Provider callbacks (optional, config-driven)
+    PROVIDER_CALLBACK_TOKEN: str = ""  # if set, require X-Provider-Token header to match
 
 
 settings = Settings()

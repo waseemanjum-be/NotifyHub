@@ -7,7 +7,7 @@ import logging
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from app.core.config import settings
 from app.db.mongo import connect_to_mongo, close_mongo_connection, get_db
@@ -25,12 +25,7 @@ class RetryPolicy:
     jitter_ratio: float = 0.2
 
 
-def compute_next_attempt_at(
-    now: datetime,
-    attempt_no: int,
-    policy: RetryPolicy,
-) -> datetime:
-    # Exponential backoff: base * 2^(attempt_no-1), capped + jitter
+def compute_next_attempt_at(now: datetime, attempt_no: int, policy: RetryPolicy) -> datetime:
     delay = policy.base_delay_seconds * (2 ** max(0, attempt_no - 1))
     delay = min(delay, policy.max_delay_seconds)
     jitter = delay * policy.jitter_ratio
@@ -58,6 +53,25 @@ class DeliveryWorker:
                 await asyncio.sleep(0.5)
                 continue
 
+            await self._repo.append_event(
+                notification_id=job["notification_id"],
+                event={
+                    "type": "CLAIMED",
+                    "at": now,
+                    "channel": job["channel"],
+                    "priority": job.get("priority", "NORMAL"),
+                },
+            )
+
+            logger.info(
+                "Claimed delivery job",
+                extra={
+                    "notification_id": job["notification_id"],
+                    "channel": job["channel"],
+                    "priority": job.get("priority", "NORMAL"),
+                },
+            )
+
             await self._process_job(job, now)
 
     async def _process_job(self, job: Dict[str, Any], now: datetime) -> None:
@@ -66,7 +80,6 @@ class DeliveryWorker:
         attempt_count = int(job.get("attempt_count", 0))
         attempt_no = attempt_count + 1
 
-        # Build provider payload (generic; provider decides how to handle it)
         provider_payload: Dict[str, Any] = {
             "notification_id": notification_id,
             "user_id": job["user_id"],
@@ -79,7 +92,6 @@ class DeliveryWorker:
         result = await self._provider.send(channel=channel, payload=provider_payload)
 
         if result.ok:
-            # QUEUED/RETRY_DUE -> SENDING -> SENT
             await self._repo.record_delivery_attempt(
                 notification_id=notification_id,
                 channel=channel,
@@ -99,6 +111,17 @@ class DeliveryWorker:
                 last_error=None,
                 now=now,
             )
+            await self._repo.append_event(
+                notification_id=notification_id,
+                event={
+                    "type": "PROVIDER_SUCCESS",
+                    "at": now,
+                    "channel": channel,
+                    "attempt_no": attempt_no,
+                    "provider_status_code": result.status_code,
+                },
+            )
+
             logger.info(
                 "Delivery success",
                 extra={
@@ -110,10 +133,10 @@ class DeliveryWorker:
             )
             return
 
-        # Failure path: retry or fail permanently
         retryable = self._is_retryable(result)
         if retryable and attempt_no < self._policy.max_attempts:
             next_attempt_at = compute_next_attempt_at(now=now, attempt_no=attempt_no, policy=self._policy)
+
             await self._repo.record_delivery_attempt(
                 notification_id=notification_id,
                 channel=channel,
@@ -133,6 +156,19 @@ class DeliveryWorker:
                 last_error=result.error,
                 now=now,
             )
+            await self._repo.append_event(
+                notification_id=notification_id,
+                event={
+                    "type": "RETRY_SCHEDULED",
+                    "at": now,
+                    "channel": channel,
+                    "attempt_no": attempt_no,
+                    "next_attempt_at": next_attempt_at,
+                    "provider_status_code": result.status_code,
+                    "error": result.error,
+                },
+            )
+
             logger.warning(
                 "Delivery failed; scheduled retry",
                 extra={
@@ -146,7 +182,6 @@ class DeliveryWorker:
             )
             return
 
-        # Permanent failure
         await self._repo.record_delivery_attempt(
             notification_id=notification_id,
             channel=channel,
@@ -166,6 +201,18 @@ class DeliveryWorker:
             last_error=result.error,
             now=now,
         )
+        await self._repo.append_event(
+            notification_id=notification_id,
+            event={
+                "type": "FINAL_FAILURE",
+                "at": now,
+                "channel": channel,
+                "attempt_no": attempt_no,
+                "provider_status_code": result.status_code,
+                "error": result.error,
+            },
+        )
+
         logger.error(
             "Delivery failed; marked FAILED",
             extra={
@@ -179,7 +226,6 @@ class DeliveryWorker:
 
     def _is_retryable(self, result: ProviderResult) -> bool:
         if result.status_code is None:
-            # Network/timeout errors
             return True
         return int(result.status_code) in set(settings.PROVIDER_RETRYABLE_STATUS_CODES)
 

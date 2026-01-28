@@ -1,1 +1,108 @@
-### 9) Status completion to READ (minimal and config-compatible)
+# app/schemas/notifications.py
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class Channel(str, Enum):
+    EMAIL = "EMAIL"
+    SMS = "SMS"
+    PUSH = "PUSH"
+
+
+class Priority(str, Enum):
+    LOW = "LOW"
+    NORMAL = "NORMAL"
+    HIGH = "HIGH"
+
+
+class DeliveryStatus(str, Enum):
+    QUEUED = "QUEUED"
+    SENDING = "SENDING"
+    SENT = "SENT"
+    DELIVERED = "DELIVERED"
+    READ = "READ"
+    RETRY_DUE = "RETRY_DUE"
+    FAILED = "FAILED"
+
+
+class NotificationCreateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    idempotency_key: UUID
+    user_id: str = Field(min_length=1)
+    template_id: str = Field(min_length=1)
+    template_params: Dict[str, Any] = Field(default_factory=dict)
+    channels: List[Channel] = Field(min_length=1)
+    priority: Priority = Priority.NORMAL
+
+    @field_validator("channels")
+    @classmethod
+    def validate_channels(cls, v: List[Channel]) -> List[Channel]:
+        if not v:
+            raise ValueError("channels must contain at least one channel")
+        if len(set(v)) != len(v):
+            raise ValueError("channels must not contain duplicates")
+        return v
+
+
+class NotificationCreateResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    notification_id: str
+
+
+class ChannelStatus(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    channel: Channel
+    status: DeliveryStatus
+    attempt_count: int = 0
+    last_error: Optional[str] = None
+    next_attempt_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class NotificationStatusResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    notification_id: str
+    user_id: str
+    template_id: str
+    priority: Priority
+    overall_status: DeliveryStatus
+    channels: List[ChannelStatus]
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class NotificationReadRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    # If None, server marks all channels as READ.
+    channel: Optional[Channel] = None
+
+
+class ProviderReceiptEvent(str, Enum):
+    DELIVERED = "DELIVERED"
+    READ = "READ"
+
+
+class ProviderReceiptRequest(BaseModel):
+    """
+    Provider callback payload:
+    - No mock logic; real providers or local external simulators call this.
+    - Marks channel status as DELIVERED or READ.
+    """
+    model_config = {"extra": "forbid"}
+
+    channel: Channel
+    event: ProviderReceiptEvent
+    provider_message_id: Optional[str] = None
+    occurred_at: Optional[datetime] = None
